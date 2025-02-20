@@ -1,0 +1,37 @@
+experiment: Multitask Learning on Segmentation and Classification of Intracranial Hemorrhage Using CT Scans
+exp_name: exp_name
+image:
+  dir: data/images
+
+model:
+  segnet:
+    lr: 0.001
+    in_channel: 1
+    out_channel: 2
+    encode_layers: [16, 48, 96, 192, 384]
+    decode_layers: [64, 32, 16, 4]
+    stride: [2, 2, 2, 2]
+    dropout: 0.2
+    norm: instance
+  
+  regnet:
+    lr: 0.001
+    in_channel: 1
+    out_channel: 3
+    encode_layers: [16, 32, 32, 32, 32]
+    decode_layers: [32, 32, 32, 32, 16, 16]
+    stride: [2, 2, 2, 2]
+    dropout: 0.2
+    norm: instance
+  
+  classnet:
+    lr: 0.001
+    in_channel: 128
+    out_channel: 6
+
+train:
+  num_samples: 8000
+  batch_size: 36
+  epochs: 800
+  lr: 0.001
+  val_iter: 1

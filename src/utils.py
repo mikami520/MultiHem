@@ -4,7 +4,7 @@
 Author       : Chris Xiao yl.xiao@mail.utoronto.ca
 Date         : 2025-02-19 18:33:19
 LastEditors  : Chris Xiao yl.xiao@mail.utoronto.ca
-LastEditTime : 2025-02-19 18:33:20
+LastEditTime : 2025-02-20 03:09:10
 FilePath     : /MultiHem/src/utils.py
 Description  : Help Functions of MultiHem
 I Love IU
@@ -87,8 +87,12 @@ def plot_progress(
         fig.savefig(os.path.join(save_dir, name + ".png"))
         plt.cla()
         plt.close(fig)
-    except:
-        logger.info(f"failed to plot {name} training progress")
+    except ImportError as e:
+        logger.info(f"ImportError: failed to plot {name} training progress: {e}")
+        raise e
+    except Exception as e:
+        logger.info(f"Failed to plot {name} training progress: {e}")
+        raise e
 
 
 def setup_logger(
