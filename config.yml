@@ -1,37 +1,47 @@
 experiment: Multitask Learning on Segmentation and Classification of Intracranial Hemorrhage Using CT Scans
 exp_name: exp_name
-image:
-  dir: data/images
+
+data:
+  img_dir: /Users/chrisxiao/Documents/havefun/images
+  seg_dir: /Users/chrisxiao/Documents/havefun/labels
+  postfix: nii.gz
+  n_samples: 50
 
 model:
   segnet:
+    batch_size: 8
+    n_batch_per_epoch: 2
     lr: 0.001
     in_channel: 1
     out_channel: 2
     encode_layers: [16, 48, 96, 192, 384]
     decode_layers: [64, 32, 16, 4]
     stride: [2, 2, 2, 2]
-    dropout: 0.2
+    dropout: 0.3
     norm: instance
+    loss_weights: [3.0, 2.0]
   
   regnet:
+    batch_size: 4
+    n_batch_per_epoch: 2
     lr: 0.001
-    in_channel: 1
+    in_channel: 2
     out_channel: 3
     encode_layers: [16, 32, 32, 32, 32]
     decode_layers: [32, 32, 32, 32, 16, 16]
     stride: [2, 2, 2, 2]
-    dropout: 0.2
+    dropout: 0.3
     norm: instance
+    loss_weights: [1.0, 5e-5, 2.0]
   
   classnet:
+    batch_size: 4
+    n_batch_per_epoch: 2
     lr: 0.001
     in_channel: 128
-    out_channel: 6
+    out_channel: 5
 
 train:
-  num_samples: 8000
-  batch_size: 36
-  epochs: 800
-  lr: 0.001
+  run_all: True
+  epochs: 2
   val_iter: 1

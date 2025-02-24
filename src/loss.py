@@ -4,7 +4,7 @@
 Author       : Chris Xiao yl.xiao@mail.utoronto.ca
 Date         : 2025-02-19 23:26:08
 LastEditors  : Chris Xiao yl.xiao@mail.utoronto.ca
-LastEditTime : 2025-02-20 02:40:54
+LastEditTime : 2025-02-24 03:24:26
 FilePath     : /MultiHem/src/loss.py
 Description  : Loss Functions of MultiHem
 I Love IU
@@ -137,5 +137,5 @@ class ClassLoss(nn.Module):
         self.ce = nn.CrossEntropyLoss(reduction=reduction)
 
     def forward(self, y_pred, y_true):
-        loss = self.ce(y_pred, y_true)
+        loss = self.ce(y_pred, y_true.long())
         return loss
