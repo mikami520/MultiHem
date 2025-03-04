@@ -147,11 +147,22 @@ slice_counts = df['Category'].value_counts()
 print("Slice-Level Counts:")
 print(slice_counts)
 
+'''
+Category
+Neither                  5665
+Intraventricular Only     899
+Intraparenchymal Only     795
+'''
+
 # Count patient-level categories
 total_patients = df['patient'].nunique()
 print(f"Total number of unique patients: {total_patients}")
 
 df_patients = df.groupby("patient")[["intraparenchymal", "intraventricular"]].max().reset_index()
+# kepp the scan ID for each patient 
+df_scan_id = df.groupby("patient")["scan"].first().reset_index()
+df_patients = pd.merge(df_patients, df_scan_id, on="patient",how="left")
+# Add a new column "Category" to indicate the hemorrhage type(s) for each patient
 df_patients['Category'] = "Neither"
 df_patients.loc[(df_patients['intraparenchymal'] == 1) & (df_patients['intraventricular'] == 0), "Category"] = "Intraparenchymal Only"
 df_patients.loc[(df_patients['intraparenchymal'] == 0) & (df_patients['intraventricular'] == 1), "Category"] = "Intraventricular Only"
@@ -160,6 +171,13 @@ df_patients.loc[(df_patients['intraparenchymal'] == 1) & (df_patients['intravent
 patient_counts = df_patients['Category'].value_counts()
 print("Patient-Level Counts:")
 print(patient_counts)
+
+'''
+Category
+Intraparenchymal Only    108
+Intraventricular Only    101
+'''
+
 
 # Save the patient-level data to a CSV
 df_patients.to_csv(output_csv, index=False)
