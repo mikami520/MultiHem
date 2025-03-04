@@ -38,3 +38,11 @@ print(f"Participants with only IPH (intraparenchymal hemorrhage): {iph_only_coun
 print(f"Participants with only IVH (intraventricular hemorrhage): {ivh_only_count}")
 print(f"Participants with both IPH and IVH: {both_count}")
 print(f"Participants with neither IPH nor IVH: {neither_count}")
+
+'''
+Summary:
+Participants with only IPH (intraparenchymal hemorrhage): 5955
+Participants with only IVH (intraventricular hemorrhage): 3621
+Participants with both IPH and IVH: 2504
+Participants with neither IPH nor IVH: 0
+'''
