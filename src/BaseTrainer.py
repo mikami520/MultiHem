@@ -4,8 +4,8 @@
 Author       : Chris Xiao yl.xiao@mail.utoronto.ca
 Date         : 2025-03-08 22:04:58
 LastEditors  : Chris Xiao yl.xiao@mail.utoronto.ca
-LastEditTime : 2025-03-09 04:57:10
-FilePath     : /MultiHem/src/BaseTrainer.py
+LastEditTime : 2025-03-09 06:00:43
+FilePath     : /Downloads/MultiHem/src/BaseTrainer.py
 Description  : Trainer script for base model
 I Love IU
 Copyright (c) 2025 by Chris Xiao yl.xiao@mail.utoronto.ca, All Rights Reserved.
@@ -125,7 +125,7 @@ class BaseTrainer:
                 cache_num=16,
             ),
             batch_size=int(self.cfg.model.baseseg.batch_size),
-            num_workers=2,
+            num_workers=0,
             shuffle=True,
             pin_memory=True,
         )
@@ -136,7 +136,7 @@ class BaseTrainer:
                 cache_num=16,
             ),
             batch_size=int(self.cfg.model.baseseg.batch_size) * 2,
-            num_workers=2,
+            num_workers=0,
             shuffle=False,
             pin_memory=True,
         )
@@ -170,7 +170,7 @@ class BaseTrainer:
             self.train_losses.append([epoch + 1, avg_loss])
             self.logger.info(f"\tTraining Loss: {avg_loss:.4f}")
 
-            if (epoch + 1) % self.cfg.train.valid_iter == 0:
+            if (epoch + 1) % self.cfg.train.val_iter == 0:
                 self.net.eval()
                 losses_val = []
                 with torch.no_grad():
@@ -195,7 +195,7 @@ class BaseTrainer:
                 if avg_loss < self.best_loss:
                     self.best_loss = avg_loss
                     self.logger.info(
-                        f"\tSaving Best Model with Loss: {self.best_seg_loss:.4f}"
+                        f"\tSaving Best Model with Loss: {self.best_loss:.4f}"
                     )
                     torch.save(
                         self.net.state_dict(),
@@ -210,7 +210,7 @@ class BaseTrainer:
                 "Baseline",
             )
             del pred, loss, losses_tr, losses_val, avg_loss
-            torch.empty_cache()
+            torch.cuda.empty_cache()
             self.logger.info(f"\tSaving Checkpoint for Epoch {epoch + 1}")
             self.save_checkpoint()
 

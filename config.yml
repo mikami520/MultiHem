@@ -2,8 +2,8 @@ experiment: Multitask Learning on Segmentation and Classification of Intracrania
 exp_name: exp_baseline
 
 data:
-  img_dir: /Users/chrisxiao/Documents/Hemo_Data/preprocessed/train/images
-  seg_dir: /Users/chrisxiao/Documents/Hemo_Data/preprocessed/train/labels
+  img_dir: /home/chris/Downloads/Hemo_Data/train/images
+  seg_dir: /home/chris/Downloads/Hemo_Data/train/labels
   postfix: nii.gz
   n_samples: 222
 
@@ -51,7 +51,7 @@ model:
     dropout: 0.2
   
   baseseg:
-    batch_size: 2
+    batch_size: 4
     lr: 5e-4
     spatial_dim: 3
     in_channel: 1
@@ -63,5 +63,5 @@ model:
     act: leakyrelu
 
 train:
-  epochs: 2
+  epochs: 300
   val_iter: 1
