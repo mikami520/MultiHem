@@ -12,7 +12,7 @@ Copyright (c) 2025 by Chris Xiao yl.xiao@mail.utoronto.ca, All Rights Reserved.
 """
 
 import torch
-from src import Trainer
+from src import Trainer, BaseTrainer
 import argparse
 import os
 from omegaconf import OmegaConf
@@ -55,7 +55,8 @@ def main():
     else:
         raise ValueError("config file not specified")
 
-    trainer = Trainer(cfg, device)
+    trainer = BaseTrainer(cfg, device)
+
     if check_test:
         trainer.test()
     else:

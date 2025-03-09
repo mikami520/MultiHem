@@ -4,7 +4,7 @@
 Author       : Chris Xiao yl.xiao@mail.utoronto.ca
 Date         : 2025-02-19 18:29:30
 LastEditors  : Chris Xiao yl.xiao@mail.utoronto.ca
-LastEditTime : 2025-02-20 02:33:16
+LastEditTime : 2025-03-08 22:36:28
 FilePath     : /MultiHem/src/model.py
 Description  : Backbone Architectures of MultiHem
 I Love IU
@@ -17,14 +17,15 @@ __all__ = [
     "RegNet",
     "Fusion",
     "Classifier",
+    "BaseSeg",
     "seg_encoder",
     "reg_encoder",
     "seg_decoder",
     "seg_decoder_last",
     "reg_decoder",
-    "SpatialTransformer",
 ]
 
+import monai
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -144,16 +145,77 @@ class SpatialAttention(nn.Module):
 
 
 class Classifier(nn.Module):
-    def __init__(self, in_channel: int, out_channel: int) -> None:
+    def __init__(
+        self,
+        in_channel: int,
+        num_classes: int,
+        hidden_dim: int = 256,  # Lower hidden dimension for efficiency.
+        num_transformer_layers: int = 2,  # Using a single layer.
+        num_heads: int = 4,  # Fewer attention heads.
+        dropout: float = 0.1,
+    ):
         super(Classifier, self).__init__()
-        self.avg_pool = nn.AdaptiveAvgPool3d((1, 1, 1))
-        self.fc = nn.Linear(in_channel, out_channel)
+        # Project fused features to a lower-dimensional space.
+        self.conv_proj = nn.Conv3d(in_channel, hidden_dim, kernel_size=1)
+
+        # Learnable classification token.
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, hidden_dim))
+
+        # Positional embeddings will be dynamically initialized based on token count.
+        self.pos_embed = None
+        self.pos_embed_initialized = False
+
+        # Transformer encoder layer.
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=hidden_dim, nhead=num_heads, dropout=dropout
+        )
+        self.transformer = nn.TransformerEncoder(
+            encoder_layer, num_layers=num_transformer_layers
+        )
+
+        # Final classification head.
+        self.classifier = nn.Linear(hidden_dim, num_classes)
+        self.dropout = nn.Dropout(dropout)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.avg_pool(x)
-        x = torch.flatten(x, 1)
-        x = self.fc(x)
-        return x
+        # x: [B, in_channel, H, W, D] from the fusion module.
+        B, C, H, W, D = x.shape
+        x = self.conv_proj(x)  # [B, hidden_dim, H, W, D]
+
+        # Flatten spatial dimensions to create a sequence of tokens.
+        x = x.flatten(2)  # [B, hidden_dim, N] where N = H * W * D.
+        x = x.transpose(1, 2)  # [B, N, hidden_dim]
+
+        # Initialize positional embeddings if not done already or if the sequence length changes.
+        if not self.pos_embed_initialized or self.pos_embed.shape[1] != (
+            x.shape[1] + 1
+        ):
+            self.pos_embed = nn.Parameter(
+                torch.zeros(1, x.shape[1] + 1, x.shape[2], device=x.device)
+            )
+            nn.init.trunc_normal_(self.pos_embed, std=0.02)
+            self.pos_embed_initialized = True
+
+        # Expand the classification token for the batch.
+        cls_tokens = self.cls_token.expand(B, -1, -1)  # [B, 1, hidden_dim]
+
+        # Concatenate the classification token with the flattened tokens.
+        x = torch.cat((cls_tokens, x), dim=1)  # [B, 1+N, hidden_dim]
+
+        # Add positional embeddings.
+        x = x + self.pos_embed
+        x = self.dropout(x)
+
+        # Prepare data for transformer: [sequence length, batch size, hidden_dim]
+        x = x.transpose(0, 1)  # [1+N, B, hidden_dim]
+
+        # Process through the transformer encoder.
+        x = self.transformer(x)  # [1+N, B, hidden_dim]
+
+        # Use the classification token for the final prediction.
+        cls_out = x[0]  # [B, hidden_dim]
+        logits = self.classifier(cls_out)  # [B, num_classes]
+        return logits
 
 
 class SegNet(nn.Module):
@@ -525,48 +587,19 @@ class reg_decoder(nn.Module):
         return x1
 
 
-class SpatialTransformer(nn.Module):
-    """
-    N-D Spatial Transformer
-    """
-
-    def __init__(self, size: Sequence[int], mode: str = "bilinear") -> None:
-        super().__init__()
-
-        self.mode = mode
-
-        # create sampling grid
-        vectors = [torch.arange(0, s) for s in size]
-        grids = torch.meshgrid(vectors)
-        grid = torch.stack(grids)
-        grid = torch.unsqueeze(grid, 0)
-        grid = grid.type(torch.FloatTensor)
-
-        # registering the grid as a buffer cleanly moves it to the GPU, but it also
-        # adds it to the state dict. this is annoying since everything in the state dict
-        # is included when saving weights to disk, so the model files are way bigger
-        # than they need to be. so far, there does not appear to be an elegant solution.
-        # see: https://discuss.pytorch.org/t/how-to-register-buffer-without-polluting-state-dict
-        self.register_buffer("grid", grid)
-
-    def forward(self, src: torch.Tensor, flow: torch.Tensor) -> torch.Tensor:
-        # new locations
-        new_locs = self.grid + flow
-        shape = flow.shape[2:]
-
-        # need to normalize grid values to [-1, 1] for resampler
-        for i in range(len(shape)):
-            new_locs[:, i, ...] = 2 * (new_locs[:, i, ...] / (shape[i] - 1) - 0.5)
-
-        # move channels dim to last position
-        # also not sure why, but the channels need to be reversed
-        if len(shape) == 2:
-            new_locs = new_locs.permute(0, 2, 3, 1)
-            new_locs = new_locs[..., [1, 0]]
-        elif len(shape) == 3:
-            new_locs = new_locs.permute(0, 2, 3, 4, 1)
-            new_locs = new_locs[..., [2, 1, 0]]
-
-        return F.grid_sample(
-            src, new_locs, align_corners=True, mode=self.mode, padding_mode="border"
+class BaseSeg(nn.Module):
+    def __init__(self, cfg):
+        super(BaseSeg, self).__init__()
+        self.segnet = monai.networks.nets.UNet(
+            spatial_dims=cfg.model.baseseg.spatial_dim,  # spatial dims
+            in_channels=cfg.model.baseseg.in_channel,  # input channels
+            out_channels=cfg.model.baseseg.out_channel,  # output channels
+            channels=cfg.model.baseseg.channels,  # channel sequence
+            strides=cfg.model.baseseg.strides,  # convolutional strides
+            dropout=cfg.model.baseseg.dropout,
+            act=cfg.model.baseseg.act,
+            norm=cfg.model.baseseg.norm,
         )
+
+    def forward(self, x):
+        return self.segnet(x)

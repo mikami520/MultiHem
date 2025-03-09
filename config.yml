@@ -1,15 +1,15 @@
 experiment: Multitask Learning on Segmentation and Classification of Intracranial Hemorrhage Using CT Scans
-exp_name: exp_name
+exp_name: exp_baseline
 
 data:
-  img_dir: /Users/chrisxiao/Documents/havefun/images
-  seg_dir: /Users/chrisxiao/Documents/havefun/labels
+  img_dir: /Users/chrisxiao/Documents/Hemo_Data/preprocessed/train/images
+  seg_dir: /Users/chrisxiao/Documents/Hemo_Data/preprocessed/train/labels
   postfix: nii.gz
-  n_samples: 50
+  n_samples: 222
 
 model:
   segnet:
-    batch_size: 8
+    batch_size: 4
     n_batch_per_epoch: 2
     lr: 0.001
     in_channel: 1
@@ -34,14 +34,34 @@ model:
     norm: instance
     loss_weights: [1.0, 5e-5, 2.0]
   
+  fusion:
+    lr: 0.0001
+    weight_decay: 1e-5
+  
   classnet:
     batch_size: 4
     n_batch_per_epoch: 2
     lr: 0.001
+    weight_decay: 1e-4
     in_channel: 128
     out_channel: 5
+    hidden_dim: 256
+    num_transformer_layers: 2
+    num_heads: 8
+    dropout: 0.2
+  
+  baseseg:
+    batch_size: 2
+    lr: 5e-4
+    spatial_dim: 3
+    in_channel: 1
+    out_channel: 2
+    channels: [8, 16, 16, 32, 32, 64, 64]
+    strides: [1, 2, 1, 2, 1, 2]
+    dropout: 0.2
+    norm: batch
+    act: leakyrelu
 
 train:
-  run_all: True
   epochs: 2
   val_iter: 1

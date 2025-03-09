@@ -4,7 +4,7 @@
 Author       : Chris Xiao yl.xiao@mail.utoronto.ca
 Date         : 2025-02-19 18:33:19
 LastEditors  : Chris Xiao yl.xiao@mail.utoronto.ca
-LastEditTime : 2025-02-24 03:01:20
+LastEditTime : 2025-03-08 23:48:06
 FilePath     : /MultiHem/src/utils.py
 Description  : Help Functions of MultiHem
 I Love IU
@@ -32,6 +32,7 @@ __all__ = [
     "setup_logger",
     "make_if_dont_exist",
     "create_batch_generator",
+    "compute_train_intensity_stats",
     "DataHandler",
 ]
 
@@ -134,12 +135,6 @@ def make_if_dont_exist(folder_path: str, overwrite: bool = False):
         print(f"{folder_path} created!")
 
 
-def add_classification_labels(data, label):
-    for ele in data:
-        ele["label"] = label
-    return data
-
-
 def create_batch_generator(dataloader_subdivided, seg=False):
     """
     Create a batch generator that samples data pairs with various segmentation availabilities.
@@ -178,6 +173,16 @@ def create_batch_generator(dataloader_subdivided, seg=False):
                 yield next(dataloader_subdivided_as_iterators[seg_availability])
 
     return batch_generator
+
+
+def compute_train_intensity_stats(train_data_list):
+    intensities = []
+    for data in train_data_list:
+        image = np.load(data["image"])  # Load training images
+        intensities.append(image.flatten())  # Collect all pixel values
+    intensities = np.concatenate(intensities)
+    mean, std = np.mean(intensities), np.std(intensities)
+    return mean, std
 
 
 class DataHandler:

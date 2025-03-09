@@ -4,7 +4,7 @@
 Author       : Chris Xiao yl.xiao@mail.utoronto.ca
 Date         : 2025-02-19 21:08:57
 LastEditors  : Chris Xiao yl.xiao@mail.utoronto.ca
-LastEditTime : 2025-02-24 03:26:15
+LastEditTime : 2025-03-09 04:55:15
 FilePath     : /MultiHem/src/trainer.py
 Description  : Trainer of MultiHem
 I Love IU
@@ -26,8 +26,6 @@ from src.utils import (
 from src.model import SegNet, RegNet, Fusion, Classifier
 from src.loss import SegLoss, RegLoss, ClassLoss, DiceLoss
 import monai
-
-torch.serialization.add_safe_globals([np.core.multiarray.scalar])
 
 TRANSFORMS = {
     "seg": monai.transforms.Compose(
@@ -115,8 +113,17 @@ class Trainer:
 
         self.classnet = Classifier(
             in_channel=self.cfg.model.classnet.in_channel,
-            out_channel=self.cfg.model.classnet.out_channel,
+            num_classes=self.cfg.model.classnet.out_channel,
+            hidden_dim=self.cfg.model.classnet.hidden_dim,
+            num_transformer_layers=self.cfg.model.classnet.num_transformer_layers,
+            num_heads=self.cfg.model.classnet.num_heads,
+            dropout=self.cfg.model.classnet.dropout,
         ).to(self.device)
+
+        self.segnet.eval()
+        self.regnet.eval()
+        self.fusion.eval()
+        self.classnet.eval()
 
     def prepare_optimizer(self):
         self.seg_optimizer = torch.optim.Adam(
@@ -129,10 +136,19 @@ class Trainer:
             lr=self.cfg.model.regnet.lr,
             weight_decay=1e-5,
         )
-        self.class_optimizer = torch.optim.Adam(
-            self.classnet.parameters(),
-            lr=self.cfg.model.classnet.lr,
-            weight_decay=1e-5,
+        self.class_optimizer = torch.optim.AdamW(
+            [
+                {
+                    "params": self.fusion.parameters(),
+                    "lr": self.cfg.model.fusion.lr,
+                    "weight_decay": self.cfg.model.fusion.weight_decay,
+                },
+                {
+                    "params": self.classnet.parameters(),
+                    "lr": self.cfg.model.classnet.lr,
+                    "weight_decay": self.cfg.model.classnet.weight_decay,
+                },
+            ]
         )
 
     def prepare_loss(self):
@@ -252,19 +268,16 @@ class Trainer:
         self.batch_gen_reg_val = create_batch_generator(dataloader_reg_val)
         self.batch_gen_seg_tr = create_batch_generator(dataloader_reg_tr, seg=True)
 
-    def swap_training(self, net_train, net_freeze1, net_freeze2):
-        for param in net_train.parameters():
-            param.requires_grad = True
-
-        for param in net_freeze1.parameters():
-            param.requires_grad = False
-
-        for param in net_freeze2.parameters():
-            param.requires_grad = False
-
-        net_train.train()
-        net_freeze1.eval()
-        net_freeze2.eval()
+    # New helper: accepts lists of networks to train vs. freeze.
+    def swap_training(self, nets_train, nets_freeze):
+        for net in nets_train:
+            for param in net.parameters():
+                param.requires_grad = True
+            net.train()
+        for net in nets_freeze:
+            for param in net.parameters():
+                param.requires_grad = False
+            net.eval()
 
     def train(self):
         self.logger.info("-----" * 10)
@@ -272,9 +285,10 @@ class Trainer:
         self.logger.info("-----" * 10)
         for epoch in range(self.last_epoch_train, self.cfg.train.epochs):
             self.logger.info(f"\tEpoch {epoch + 1}/{self.cfg.train.epochs}")
+            self.last_epoch_train = epoch
             reg_losses_tr = []
             self.logger.info("-----" * 10)
-            self.swap_training(self.regnet, self.segnet, self.classnet)
+            self.swap_training([self.regnet], [self.segnet, self.fusion, self.classnet])
             # ---------------------------------------------------------
             #     reg_net training, with seg_net and class_net frozen
             # ---------------------------------------------------------
@@ -366,7 +380,12 @@ class Trainer:
                         f"\tSaving Best Model with Loss: {self.best_reg_loss:.4f}"
                     )
                     torch.save(
-                        self.regnet.state_dict(),
+                        {
+                            "weights_reg": self.regnet.state_dict(),
+                            "weights_seg": self.segnet.state_dict(),
+                            "weights_fusion": self.fusion.state_dict(),
+                            "weights_classifier": self.classnet.state_dict(),
+                        },
                         os.path.join(self.model_dir, "best_reg.pt"),
                     )
             plot_progress(
@@ -380,7 +399,7 @@ class Trainer:
             torch.cuda.empty_cache()
 
             self.logger.info("-----" * 10)
-            self.swap_training(self.segnet, self.regnet, self.classnet)
+            self.swap_training([self.segnet], [self.regnet, self.fusion, self.classnet])
             # ---------------------------------------------------------
             #     seg_net training, with reg_net and class_net frozen
             # ---------------------------------------------------------
@@ -464,7 +483,12 @@ class Trainer:
                         f"\tSaving Best Model with Loss: {self.best_seg_loss:.4f}"
                     )
                     torch.save(
-                        self.segnet.state_dict(),
+                        {
+                            "weights_reg": self.regnet.state_dict(),
+                            "weights_seg": self.segnet.state_dict(),
+                            "weights_fusion": self.fusion.state_dict(),
+                            "weights_classifier": self.classnet.state_dict(),
+                        },
                         os.path.join(self.model_dir, "best_seg.pt"),
                     )
             plot_progress(
@@ -478,10 +502,10 @@ class Trainer:
             torch.cuda.empty_cache()
 
             self.logger.info("-----" * 10)
-            self.swap_training(self.classnet, self.segnet, self.regnet)
             # ---------------------------------------------------------
-            #     class_net training, with seg_net and reg_net frozen
+            #     fusion and class_net training, with seg_net and reg_net frozen
             # ---------------------------------------------------------
+            self.swap_training([self.fusion, self.classnet], [self.segnet, self.regnet])
             class_losses_tr = []
 
             with tqdm(
@@ -492,10 +516,8 @@ class Trainer:
             ) as tdata:
                 for data in tdata:
                     self.class_optimizer.zero_grad()
-                    img_pair = data["img12"]
-                    subtype = data["subtype"]
-                    img_pair = img_pair.to(self.device)
-                    subtype = subtype.to(self.device)
+                    img_pair = data["img12"].to(self.device)
+                    subtype = data["subtype"].to(self.device)
                     _, reg_feats = self.regnet(img_pair)
                     _, seg_feats = self.segnet(img_pair[:, [0], :, :, :])
                     fused_feats = self.fusion(seg_feats, reg_feats)
@@ -542,7 +564,12 @@ class Trainer:
                         f"\tSaving Best Model with Loss: {self.best_class_loss:.4f}"
                     )
                     torch.save(
-                        self.classnet.state_dict(),
+                        {
+                            "weights_reg": self.regnet.state_dict(),
+                            "weights_seg": self.segnet.state_dict(),
+                            "weights_fusion": self.fusion.state_dict(),
+                            "weights_classifier": self.classnet.state_dict(),
+                        },
                         os.path.join(self.model_dir, "best_class.pt"),
                     )
             plot_progress(
@@ -587,7 +614,8 @@ class Trainer:
 
         # classifier parameters
         class_net_param = {
-            "weights": self.classnet.state_dict(),
+            "weights_fusion": self.fusion.state_dict(),
+            "weights_classifier": self.classnet.state_dict(),
             "optimizer": self.class_optimizer.state_dict(),
             "train_loss": self.train_losses_class,
             "valid_loss": self.valid_losses_class,
@@ -639,7 +667,8 @@ class Trainer:
 
         # classifier parameters
         class_net_param = latest["class"]
-        self.classnet.load_state_dict(class_net_param["weights"])
+        self.fusion.load_state_dict(class_net_param["weights_fusion"])
+        self.classnet.load_state_dict(class_net_param["weights_classifier"])
         self.class_optimizer.load_state_dict(class_net_param["optimizer"])
         self.train_losses_class = class_net_param["train_loss"]
         self.valid_losses_class = class_net_param["valid_loss"]
@@ -647,6 +676,7 @@ class Trainer:
 
         self.segnet.eval()
         self.regnet.eval()
+        self.fusion.eval()
         self.classnet.eval()
 
     def resume(self):
