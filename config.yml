@@ -52,7 +52,7 @@ model:
   
   baseseg:
     batch_size: 4
-    lr: 5e-4
+    lr: 1e-3
     spatial_dim: 3
     in_channel: 1
     out_channel: 2

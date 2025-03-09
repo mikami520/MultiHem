@@ -4,8 +4,8 @@
 Author       : Chris Xiao yl.xiao@mail.utoronto.ca
 Date         : 2025-02-19 21:08:57
 LastEditors  : Chris Xiao yl.xiao@mail.utoronto.ca
-LastEditTime : 2025-03-09 04:55:15
-FilePath     : /MultiHem/src/trainer.py
+LastEditTime : 2025-03-09 06:12:39
+FilePath     : /Downloads/MultiHem/src/trainer.py
 Description  : Trainer of MultiHem
 I Love IU
 Copyright (c) 2025 by Chris Xiao yl.xiao@mail.utoronto.ca, All Rights Reserved.
@@ -205,7 +205,7 @@ class Trainer:
                 cache_num=16,
             ),
             batch_size=int(self.cfg.model.segnet.batch_size) * 2,
-            num_workers=2,
+            num_workers=1,
             shuffle=False,
             pin_memory=True,
         )
@@ -239,7 +239,7 @@ class Trainer:
                 monai.data.DataLoader(
                     dataset,
                     batch_size=int(self.cfg.model.regnet.batch_size),
-                    num_workers=2,
+                    num_workers=1,
                     shuffle=True,
                     pin_memory=True,
                 )
@@ -254,7 +254,7 @@ class Trainer:
                 monai.data.DataLoader(
                     dataset,
                     batch_size=int(self.cfg.model.regnet.batch_size) * 2,
-                    num_workers=2,
+                    num_workers=1,
                     shuffle=True,
                     pin_memory=True,
                 )
