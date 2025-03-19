@@ -4,14 +4,13 @@
 Author       : Chris Xiao yl.xiao@mail.utoronto.ca
 Date         : 2025-02-19 18:34:17
 LastEditors  : Chris Xiao yl.xiao@mail.utoronto.ca
-LastEditTime : 2025-02-20 03:06:01
-FilePath     : /MultiHem/main.py
+LastEditTime : 2025-03-19 17:06:05
+FilePath     : /Downloads/MultiHem/main.py
 Description  : Main Function of MultiHem
 I Love IU
 Copyright (c) 2025 by Chris Xiao yl.xiao@mail.utoronto.ca, All Rights Reserved.
 """
 
-import torch
 from src import Trainer, BaseTrainer
 import argparse
 import os
@@ -55,7 +54,7 @@ def main():
     else:
         raise ValueError("config file not specified")
 
-    trainer = BaseTrainer(cfg, device)
+    trainer = Trainer(cfg, device)
 
     if check_test:
         trainer.test()

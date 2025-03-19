@@ -4,7 +4,7 @@
 Author       : Chris Xiao yl.xiao@mail.utoronto.ca
 Date         : 2025-03-08 22:04:58
 LastEditors  : Chris Xiao yl.xiao@mail.utoronto.ca
-LastEditTime : 2025-03-09 06:00:43
+LastEditTime : 2025-03-19 17:19:58
 FilePath     : /Downloads/MultiHem/src/BaseTrainer.py
 Description  : Trainer script for base model
 I Love IU

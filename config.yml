@@ -1,17 +1,18 @@
 experiment: Multitask Learning on Segmentation and Classification of Intracranial Hemorrhage Using CT Scans
-exp_name: exp_baseline
+exp_name: exp_full
 
 data:
   img_dir: /home/chris/Downloads/Hemo_Data/train/images
   seg_dir: /home/chris/Downloads/Hemo_Data/train/labels
   postfix: nii.gz
-  n_samples: 222
+  n_samples: 1281
 
 model:
   segnet:
-    batch_size: 4
+    batch_size: 1
     n_batch_per_epoch: 2
     lr: 0.001
+    weight_decay: 1e-4
     in_channel: 1
     out_channel: 2
     encode_layers: [16, 48, 96, 192, 384]
@@ -22,9 +23,10 @@ model:
     loss_weights: [3.0, 2.0]
   
   regnet:
-    batch_size: 4
+    batch_size: 1
     n_batch_per_epoch: 2
     lr: 0.001
+    weight_decay: 1e-4
     in_channel: 2
     out_channel: 3
     encode_layers: [16, 32, 32, 32, 32]
@@ -36,29 +38,29 @@ model:
   
   fusion:
     lr: 0.0001
-    weight_decay: 1e-5
+    weight_decay: 1e-4
   
   classnet:
-    batch_size: 4
+    batch_size: 1
     n_batch_per_epoch: 2
     lr: 0.001
     weight_decay: 1e-4
     in_channel: 128
-    out_channel: 5
-    hidden_dim: 256
+    out_channel: 2
+    hidden_dim: 128
     num_transformer_layers: 2
-    num_heads: 8
+    num_heads: 4
     dropout: 0.2
   
   baseseg:
     batch_size: 4
-    lr: 1e-3
+    lr: 5e-4
     spatial_dim: 3
     in_channel: 1
     out_channel: 2
     channels: [8, 16, 16, 32, 32, 64, 64]
     strides: [1, 2, 1, 2, 1, 2]
-    dropout: 0.2
+    dropout: 0.4
     norm: batch
     act: leakyrelu
 

@@ -4,8 +4,8 @@
 Author       : Chris Xiao yl.xiao@mail.utoronto.ca
 Date         : 2025-02-19 18:29:30
 LastEditors  : Chris Xiao yl.xiao@mail.utoronto.ca
-LastEditTime : 2025-03-08 22:36:28
-FilePath     : /MultiHem/src/model.py
+LastEditTime : 2025-03-19 17:16:03
+FilePath     : /Downloads/MultiHem/src/model.py
 Description  : Backbone Architectures of MultiHem
 I Love IU
 Copyright (c) 2025 by Chris Xiao yl.xiao@mail.utoronto.ca, All Rights Reserved.
@@ -167,7 +167,7 @@ class Classifier(nn.Module):
 
         # Transformer encoder layer.
         encoder_layer = nn.TransformerEncoderLayer(
-            d_model=hidden_dim, nhead=num_heads, dropout=dropout
+            d_model=hidden_dim, nhead=num_heads, dropout=dropout, batch_first=True
         )
         self.transformer = nn.TransformerEncoder(
             encoder_layer, num_layers=num_transformer_layers

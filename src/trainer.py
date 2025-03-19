@@ -4,7 +4,7 @@
 Author       : Chris Xiao yl.xiao@mail.utoronto.ca
 Date         : 2025-02-19 21:08:57
 LastEditors  : Chris Xiao yl.xiao@mail.utoronto.ca
-LastEditTime : 2025-03-09 06:12:39
+LastEditTime : 2025-03-19 17:35:32
 FilePath     : /Downloads/MultiHem/src/trainer.py
 Description  : Trainer of MultiHem
 I Love IU
@@ -26,32 +26,82 @@ from src.utils import (
 from src.model import SegNet, RegNet, Fusion, Classifier
 from src.loss import SegLoss, RegLoss, ClassLoss, DiceLoss
 import monai
+from monai.transforms import (
+    LoadImaged,
+    EnsureChannelFirstd,
+    ScaleIntensityRanged,
+    Spacingd,
+    ResizeD,
+    SpatialPadD,
+    ConcatItemsD,
+    DeleteItemsD,
+    Compose,
+)
 
 TRANSFORMS = {
-    "seg": monai.transforms.Compose(
+    "seg": Compose(
         transforms=[
-            monai.transforms.LoadImageD(keys=["img", "seg"], image_only=False),
-            monai.transforms.TransposeD(keys=["img", "seg"], indices=(2, 1, 0)),
-            monai.transforms.EnsureChannelFirstD(keys=["img", "seg"]),
+            LoadImaged(keys=["img", "seg"], image_only=False),
+            EnsureChannelFirstd(keys=["img", "seg"]),
+            # Resample to 0.5mm isotropic spacing
+            Spacingd(
+                keys=["img", "seg"],
+                pixdim=(0.5, 0.5, 5.0),
+                mode=("bilinear", "nearest"),
+            ),
+            ScaleIntensityRanged(
+                keys=["img"], a_min=-100, a_max=300, b_min=0, b_max=1, clip=True
+            ),
+            # Resize XY but keep Z unchanged
+            ResizeD(
+                keys=["img", "seg"],
+                spatial_size=(256, 256, -1),
+                mode=("trilinear", "nearest"),
+            ),
+            # Pad Z-dimension to 128 slices
+            SpatialPadD(keys=["img", "seg"], spatial_size=(256, 256, 128)),
         ]
     ),
-    "both": monai.transforms.Compose(
+    "both": Compose(
         transforms=[
-            monai.transforms.LoadImageD(
+            LoadImaged(
                 keys=["img1", "seg1", "img2", "seg2"],
                 image_only=False,
                 allow_missing_keys=True,
             ),
-            monai.transforms.TransposeD(
-                keys=["img1", "seg1", "img2", "seg2"],
-                indices=(2, 1, 0),
-                allow_missing_keys=True,
-            ),
-            monai.transforms.EnsureChannelFirstD(
+            EnsureChannelFirstd(
                 keys=["img1", "seg1", "img2", "seg2"], allow_missing_keys=True
             ),
-            monai.transforms.ConcatItemsD(keys=["img1", "img2"], name="img12", dim=0),
-            monai.transforms.DeleteItemsD(keys=["img1", "img2"]),
+            # Resample to 0.5mm isotropic spacing
+            Spacingd(
+                keys=["img1", "seg1", "img2", "seg2"],
+                pixdim=(0.5, 0.5, 5.0),
+                mode=("bilinear", "nearest", "bilinear", "nearest"),
+                allow_missing_keys=True,
+            ),
+            ScaleIntensityRanged(
+                keys=["img1", "img2"],
+                a_min=-100,
+                a_max=300,
+                b_min=0,
+                b_max=1,
+                clip=True,
+            ),
+            # Resize XY but keep Z unchanged
+            ResizeD(
+                keys=["img1", "seg1", "img2", "seg2"],
+                spatial_size=(256, 256, -1),
+                mode=("trilinear", "nearest", "trilinear", "nearest"),
+                allow_missing_keys=True,
+            ),
+            # Pad Z-dimension to 128 slices
+            SpatialPadD(
+                keys=["img1", "seg1", "img2", "seg2"],
+                spatial_size=(256, 256, 128),
+                allow_missing_keys=True,
+            ),
+            ConcatItemsD(keys=["img1", "img2"], name="img12", dim=0),
+            DeleteItemsD(keys=["img1", "img2"]),
         ]
     ),
 }
@@ -129,12 +179,12 @@ class Trainer:
         self.seg_optimizer = torch.optim.Adam(
             self.segnet.parameters(),
             lr=self.cfg.model.segnet.lr,
-            weight_decay=1e-5,
+            weight_decay=self.cfg.model.segnet.weight_decay,
         )
         self.reg_optimizer = torch.optim.Adam(
             self.regnet.parameters(),
             lr=self.cfg.model.regnet.lr,
-            weight_decay=1e-5,
+            weight_decay=self.cfg.model.regnet.weight_decay,
         )
         self.class_optimizer = torch.optim.AdamW(
             [
@@ -205,7 +255,7 @@ class Trainer:
                 cache_num=16,
             ),
             batch_size=int(self.cfg.model.segnet.batch_size) * 2,
-            num_workers=1,
+            num_workers=0,
             shuffle=False,
             pin_memory=True,
         )
@@ -239,7 +289,7 @@ class Trainer:
                 monai.data.DataLoader(
                     dataset,
                     batch_size=int(self.cfg.model.regnet.batch_size),
-                    num_workers=1,
+                    num_workers=0,
                     shuffle=True,
                     pin_memory=True,
                 )
@@ -254,7 +304,7 @@ class Trainer:
                 monai.data.DataLoader(
                     dataset,
                     batch_size=int(self.cfg.model.regnet.batch_size) * 2,
-                    num_workers=1,
+                    num_workers=0,
                     shuffle=True,
                     pin_memory=True,
                 )
