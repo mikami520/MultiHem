@@ -24,9 +24,12 @@ Before training, modify the `config.yml` to predefine what you want to do (datas
 python main.py --cfg config.yml --device cuda
 ```
 
+All the training information (loss plot, saved model, checkpoint, log file) can be checked in the `exp` folder.
+
 ## Inference
 
 ```bash
 python main.py --cfg config.yml --device cuda --test
 ```
 
+All the inference results can be checked in the `prediction` folder.
