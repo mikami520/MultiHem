@@ -4,7 +4,7 @@
 Author       : Chris Xiao yl.xiao@mail.utoronto.ca
 Date         : 2025-02-19 18:34:17
 LastEditors  : Chris Xiao yl.xiao@mail.utoronto.ca
-LastEditTime : 2025-03-19 17:06:05
+LastEditTime : 2025-04-07 22:08:02
 FilePath     : /Downloads/MultiHem/main.py
 Description  : Main Function of MultiHem
 I Love IU
@@ -54,7 +54,7 @@ def main():
     else:
         raise ValueError("config file not specified")
 
-    trainer = Trainer(cfg, device)
+    trainer = Trainer(cfg, device, check_test)
 
     if check_test:
         trainer.test()

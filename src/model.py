@@ -4,7 +4,7 @@
 Author       : Chris Xiao yl.xiao@mail.utoronto.ca
 Date         : 2025-02-19 18:29:30
 LastEditors  : Chris Xiao yl.xiao@mail.utoronto.ca
-LastEditTime : 2025-03-19 17:16:03
+LastEditTime : 2025-04-05 16:09:45
 FilePath     : /Downloads/MultiHem/src/model.py
 Description  : Backbone Architectures of MultiHem
 I Love IU
@@ -15,14 +15,12 @@ __all__ = [
     "same_padding",
     "SegNet",
     "RegNet",
-    "Fusion",
     "Classifier",
     "BaseSeg",
     "seg_encoder",
-    "reg_encoder",
     "seg_decoder",
     "seg_decoder_last",
-    "reg_decoder",
+    "DeepSupervisionWrapper",
 ]
 
 import monai
@@ -52,170 +50,198 @@ def same_padding(
     return padding if len(padding) > 1 else padding[0]
 
 
-class Fusion(nn.Module):
+def get_num_groups(num_channels, default_num_groups=32):
+    num_groups = min(default_num_groups, num_channels)
+    while num_groups > 0:
+        if num_channels % num_groups == 0:
+            return num_groups
+        num_groups -= 1
+    return 1  # Fallback to 1 if no divisor is found
+
+
+# Memory-efficient Swish activation function
+class SwishImplementation(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x):
+        result = x * torch.sigmoid(x)
+        ctx.save_for_backward(x)
+        return result
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        x = ctx.saved_tensors[0]
+        sigmoid_x = torch.sigmoid(x)
+        grad_input = grad_output * (sigmoid_x * (1 + x * (1 - sigmoid_x)))
+        return grad_input
+
+
+class MemoryEfficientSwish(nn.Module):
+    def forward(self, x):
+        return SwishImplementation.apply(x)
+
+
+class ResidualBlock(nn.Module):
     def __init__(
         self,
-        seg_encode_layers: Sequence[int],
-        reg_encode_layers: Sequence[int],
-        stride: Sequence[int],
-    ) -> None:
-        super(Fusion, self).__init__()
-        assert len(seg_encode_layers) == len(reg_encode_layers)
-        self.stride = copy.deepcopy(stride)
-        self.stride.insert(0, 1)
-        att_list = []
-        for l_seg, l_reg in zip(seg_encode_layers, reg_encode_layers):
-            att_list.append(
-                nn.Sequential(
-                    nn.Conv3d(l_seg + l_reg, 128, kernel_size=(1, 1, 1)),
-                    ChannelAttention(128),
-                    SpatialAttention(),
-                    nn.Conv3d(128, 128, kernel_size=(1, 1, 1)),
-                )
-            )
-        self.att_list = nn.ModuleList(att_list)
-        self.smooth_conv = nn.Conv3d(128 * len(att_list), 128, kernel_size=(1, 1, 1))
-
-    def forward(
-        self, x_seg: Sequence[torch.Tensor], x_reg: Sequence[torch.Tensor]
-    ) -> torch.Tensor:
-        assert len(x_seg) == len(x_reg)
-        x_tmp = []
-        for i, att in enumerate(self.att_list):
-            assert x_seg[i].shape[2:] == x_reg[i].shape[2:], (
-                f"Shape mismatch between x_seg[{i}] and x_reg[{i}]: "
-                f"{x_seg[i].shape[2:]} != {x_reg[i].shape[2:]}"
-            )
-            x_tmp.append(
-                att(torch.cat((x_seg[i], x_reg[i]), dim=1))
-            )  # [B, 128, Hi, Wi, Di]
-
-        x_out = []
-        for i, x in enumerate(x_tmp):
-            x_out.append(
-                F.interpolate(
-                    x,
-                    scale_factor=int(np.cumprod(self.stride)[i]),
-                    mode="trilinear",
-                    align_corners=True,
-                )
-            )  # [B, 128, H0, W0, D0]
-
-        x_out = torch.cat(x_out, dim=1)  # [B, 128 * len(x_tmp), H0, W0, D0]
-        x_out = self.smooth_conv(x_out)
-        return x_out  # [B, 128, H0, W0, D0]
-
-
-class ChannelAttention(nn.Module):
-    def __init__(self, in_channel: int, reduction: int = 16) -> None:
-        super(ChannelAttention, self).__init__()
-        self.ffn = nn.Sequential(
-            nn.Conv3d(in_channel, in_channel // reduction, kernel_size=1),
-            nn.LeakyReLU(negative_slope=0.01),
-            nn.Conv3d(in_channel // reduction, in_channel, kernel_size=1),
+        in_channels,
+        out_channels,
+        kernel_size=3,
+        stride=1,
+        padding=1,
+        dropout_ratio=0.3,
+    ):
+        super(ResidualBlock, self).__init__()
+        self.conv1 = nn.Conv3d(
+            in_channels, out_channels, kernel_size, stride, padding, bias=False
         )
-        self.sigmoid = nn.Sigmoid()
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        avg_out = self.ffn(F.adaptive_avg_pool3d(x, (1, 1, 1)))  # [B, C, 1, 1, 1]
-        max_out = self.ffn(F.adaptive_max_pool3d(x, (1, 1, 1)))  # [B, C, 1, 1, 1]
-        att_map = self.sigmoid(avg_out + max_out)  # [B, C, 1, 1, 1]
-        return x * att_map
-
-
-class SpatialAttention(nn.Module):
-    def __init__(
-        self,
-        kernel: Sequence[int] | int = 3,
-        dilation: Sequence[int] | int = 1,
-    ) -> None:
-        super(SpatialAttention, self).__init__()
-        padding = same_padding(kernel, dilation)
-        self.conv = nn.Conv3d(
-            2, 1, kernel_size=kernel, padding=padding, dilation=dilation
+        self.gn1 = nn.GroupNorm(get_num_groups(out_channels), out_channels, affine=True)
+        self.swish = MemoryEfficientSwish()
+        self.conv2 = nn.Conv3d(
+            out_channels, out_channels, kernel_size, stride, padding, bias=False
         )
-        self.sigmoid = nn.Sigmoid()
+        self.gn2 = nn.GroupNorm(get_num_groups(out_channels), out_channels, affine=True)
+        self.dropout = nn.Dropout3d(p=dropout_ratio)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        avg_out = torch.mean(x, dim=1, keepdim=True)  # [B, 1, H, W, D]
-        max_out, _ = torch.max(x, dim=1, keepdim=True)  # [B, 1, H, W, D]
-        feat_cat = torch.cat((avg_out, max_out), dim=1)  # [B, 2, H, W, D]
-        att_map = self.sigmoid(self.conv(feat_cat))  # [B, 1, H, W, D]
-        return x * att_map
+        self.downsample = None
+        if in_channels != out_channels:
+            self.downsample = nn.Sequential(
+                nn.Conv3d(
+                    in_channels, out_channels, kernel_size=1, stride=1, bias=False
+                ),
+                nn.GroupNorm(get_num_groups(out_channels), out_channels, affine=True),
+            )
+
+    def forward(self, x):
+        identity = x
+        out = self.conv1(x)
+        out = self.gn1(out)
+        out = self.swish(out)
+        out = self.dropout(out)
+
+        out = self.conv2(out)
+        out = self.gn2(out)
+        out = self.swish(out)
+        out = self.dropout(out)
+
+        if self.downsample is not None:
+            identity = self.downsample(identity)
+
+        out = out + identity
+        out = self.swish(out)
+        return out
+
+
+class SqueezeExcitation(nn.Module):
+    """
+    A Squeeze-and-Excitation block for channel attention in 3D.
+    """
+
+    def __init__(self, channels, reduction=16):
+        super(SqueezeExcitation, self).__init__()
+        self.pool = nn.AdaptiveAvgPool3d(
+            (1, 1, 1)
+        )  # squeeze B x C x D x H x W -> B x C x 1 x 1 x 1
+        self.fc1 = nn.Linear(channels, channels // reduction)
+        self.fc2 = nn.Linear(channels // reduction, channels)
+        self.swish = MemoryEfficientSwish()
+
+    def forward(self, x):
+        b, c = x.shape[:2]
+        # Squeeze
+        y = self.pool(x).view(b, c)
+        # Excitation
+        y = self.fc1(y)
+        y = self.swish(y)
+        y = self.fc2(y)
+        y = torch.sigmoid(y).view((b, c) + (1,) * (x.ndim - 2))
+        return x * y
 
 
 class Classifier(nn.Module):
     def __init__(
         self,
-        in_channel: int,
-        num_classes: int,
-        hidden_dim: int = 256,  # Lower hidden dimension for efficiency.
-        num_transformer_layers: int = 2,  # Using a single layer.
-        num_heads: int = 4,  # Fewer attention heads.
-        dropout: float = 0.1,
+        in_channels,
+        num_classes=3,
+        res_channels=None,
+        hidden_dim=64,
+        dropout_p=0.3,
+        deep_supervision=False,
     ):
         super(Classifier, self).__init__()
-        # Project fused features to a lower-dimensional space.
-        self.conv_proj = nn.Conv3d(in_channel, hidden_dim, kernel_size=1)
+        self.res_channels = res_channels if res_channels is not None else in_channels
+        self.dropout_p = dropout_p
+        self.num_classes = num_classes
+        self.deep_supervision = deep_supervision
 
-        # Learnable classification token.
-        self.cls_token = nn.Parameter(torch.zeros(1, 1, hidden_dim))
+        self.pool_scales = [(1, 1, 1), (2, 2, 2)]
+        # Create a small sub-module for each pooling scale
+        self.aux_blocks = nn.ModuleList()
+        self.scale_blocks = nn.ModuleList()
 
-        # Positional embeddings will be dynamically initialized based on token count.
-        self.pos_embed = None
-        self.pos_embed_initialized = False
-
-        # Transformer encoder layer.
-        encoder_layer = nn.TransformerEncoderLayer(
-            d_model=hidden_dim, nhead=num_heads, dropout=dropout, batch_first=True
-        )
-        self.transformer = nn.TransformerEncoder(
-            encoder_layer, num_layers=num_transformer_layers
-        )
-
-        # Final classification head.
-        self.classifier = nn.Linear(hidden_dim, num_classes)
-        self.dropout = nn.Dropout(dropout)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x: [B, in_channel, H, W, D] from the fusion module.
-        B, C, H, W, D = x.shape
-        x = self.conv_proj(x)  # [B, hidden_dim, H, W, D]
-
-        # Flatten spatial dimensions to create a sequence of tokens.
-        x = x.flatten(2)  # [B, hidden_dim, N] where N = H * W * D.
-        x = x.transpose(1, 2)  # [B, N, hidden_dim]
-
-        # Initialize positional embeddings if not done already or if the sequence length changes.
-        if not self.pos_embed_initialized or self.pos_embed.shape[1] != (
-            x.shape[1] + 1
-        ):
-            self.pos_embed = nn.Parameter(
-                torch.zeros(1, x.shape[1] + 1, x.shape[2], device=x.device)
+        for scale in self.pool_scales:
+            block = nn.Sequential(
+                nn.AdaptiveAvgPool3d(scale),
+                ResidualBlock(
+                    in_channels,
+                    self.res_channels,
+                    dropout_ratio=self.dropout_p,
+                ),
+                SqueezeExcitation(self.res_channels, reduction=16),
             )
-            nn.init.trunc_normal_(self.pos_embed, std=0.02)
-            self.pos_embed_initialized = True
+            self.scale_blocks.append(block)
+            self.aux_blocks.append(
+                nn.Sequential(
+                    nn.Flatten(),
+                    nn.Dropout(p=self.dropout_p),
+                    nn.Linear(
+                        self.res_channels * scale[0] * scale[1] * scale[2],
+                        hidden_dim,
+                    ),
+                    nn.GroupNorm(get_num_groups(hidden_dim), hidden_dim, affine=True),
+                    MemoryEfficientSwish(),
+                    nn.Linear(hidden_dim, num_classes),
+                )
+            )
+        total_flat_dim = sum(
+            [
+                self.res_channels * scale[0] * scale[1] * scale[2]
+                for scale in self.pool_scales
+            ]
+        )
 
-        # Expand the classification token for the batch.
-        cls_tokens = self.cls_token.expand(B, -1, -1)  # [B, 1, hidden_dim]
+        self.dropout = nn.Dropout(p=self.dropout_p)
+        self.fc1 = nn.Linear(total_flat_dim, hidden_dim)
+        self.gn_fc1 = nn.GroupNorm(get_num_groups(hidden_dim), hidden_dim, affine=True)
+        self.fc2 = nn.Linear(hidden_dim, num_classes)
+        self.swish = MemoryEfficientSwish()
 
-        # Concatenate the classification token with the flattened tokens.
-        x = torch.cat((cls_tokens, x), dim=1)  # [B, 1+N, hidden_dim]
+    def forward(self, x):
+        """
+        x: shape (batch_size, in_channels, D, H, W) or (batch_size, in_channels, H, W)
+        """
+        # 1) Multi-scale pooling + residual + SE
+        scale_feats = []
+        aux_feats = []
+        for i, block in enumerate(self.scale_blocks):
+            feat = block(x)  # shape: (B, res_channels, scale_d, scale_h, scale_w)
+            feat = feat.view(feat.size(0), -1)  # flatten each scale
+            scale_feats.append(feat)
+            aux_feats.append(self.aux_blocks[i](feat))
+        # 2) Concat across scales
+        combined = torch.cat(scale_feats, dim=1)  # shape: (B, total_flat_dim)
 
-        # Add positional embeddings.
-        x = x + self.pos_embed
-        x = self.dropout(x)
-
-        # Prepare data for transformer: [sequence length, batch size, hidden_dim]
-        x = x.transpose(0, 1)  # [1+N, B, hidden_dim]
-
-        # Process through the transformer encoder.
-        x = self.transformer(x)  # [1+N, B, hidden_dim]
-
-        # Use the classification token for the final prediction.
-        cls_out = x[0]  # [B, hidden_dim]
-        logits = self.classifier(cls_out)  # [B, num_classes]
-        return logits
+        # 3) MLP
+        x = self.dropout(combined)
+        x = self.fc1(x)
+        x = self.gn_fc1(x)
+        x = self.swish(x)
+        x = self.fc2(x)  # shape: (B, num_classes)
+        aux_feats.append(x)
+        class_outputs = aux_feats[::-1]
+        if self.deep_supervision:
+            return class_outputs
+        else:
+            return class_outputs[0]
 
 
 class SegNet(nn.Module):
@@ -470,6 +496,37 @@ class seg_encoder(nn.Module):
         return x
 
 
+class seg_decoder(nn.Module):
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        concat_channels: int,
+        norm: str,
+        stride: Sequence[int] = (2, 2, 2),
+        kernel: Sequence[int] = (3, 3, 3),
+    ) -> None:
+        super(seg_decoder, self).__init__()
+        self.conv1 = seg_encoder(in_channels, out_channels, norm)
+        self.conv2 = seg_encoder(out_channels + concat_channels, out_channels, norm)
+        self.conv3 = seg_encoder(out_channels, out_channels, norm, kernel=kernel)
+        self.stride = stride
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        features, encoder_out = x
+        up1 = F.interpolate(
+            encoder_out,
+            scale_factor=self.stride[0],
+            mode="trilinear",
+            align_corners=True,
+        )
+        x1 = self.conv1(up1)
+        x1 = torch.cat((x1, features), dim=1)
+        x1 = self.conv2(x1)
+        x1 = self.conv3(x1)
+        return x1
+
+
 class reg_encoder(nn.Module):
     def __init__(
         self,
@@ -500,37 +557,6 @@ class reg_encoder(nn.Module):
         x = self.bn1(x)
         x = self.act1(x)
         return x
-
-
-class seg_decoder(nn.Module):
-    def __init__(
-        self,
-        in_channels: int,
-        out_channels: int,
-        concat_channels: int,
-        norm: str,
-        stride: Sequence[int] = (2, 2, 2),
-        kernel: Sequence[int] = (3, 3, 3),
-    ) -> None:
-        super(seg_decoder, self).__init__()
-        self.conv1 = seg_encoder(in_channels, out_channels, norm)
-        self.conv2 = seg_encoder(out_channels + concat_channels, out_channels, norm)
-        self.conv3 = seg_encoder(out_channels, out_channels, norm, kernel=kernel)
-        self.stride = stride
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        features, encoder_out = x
-        up1 = F.interpolate(
-            encoder_out,
-            scale_factor=self.stride[0],
-            mode="trilinear",
-            align_corners=True,
-        )
-        x1 = self.conv1(up1)
-        x1 = torch.cat((x1, features), dim=1)
-        x1 = self.conv2(x1)
-        x1 = self.conv3(x1)
-        return x1
 
 
 class seg_decoder_last(nn.Module):
@@ -603,3 +629,44 @@ class BaseSeg(nn.Module):
 
     def forward(self, x):
         return self.segnet(x)
+
+
+class DeepSupervisionWrapper(nn.Module):
+    def __init__(self, loss, weight_factors=None):
+        """
+        Wraps a loss function so that it can be applied to multiple outputs. Forward accepts an arbitrary number of
+        inputs. Each input is expected to be a tuple/list. Each tuple/list must have the same length. The loss is then
+        applied to each entry like this:
+        l = w0 * loss(input0[0], input1[0], ...) +  w1 * loss(input0[1], input1[1], ...) + ...
+        If weights are None, all w will be 1.
+        """
+        super(DeepSupervisionWrapper, self).__init__()
+        assert any([x != 0 for x in weight_factors]), (
+            "At least one weight factor should be != 0.0"
+        )
+        self.weight_factors = tuple(weight_factors)
+        self.loss = loss
+
+    def forward(self, *args):
+        assert all([isinstance(i, (tuple, list)) for i in args]), (
+            f"all args must be either tuple or list, got {[type(i) for i in args]}"
+        )
+        # we could check for equal lengths here as well, but we really shouldn't overdo it with checks because
+        # this code is executed a lot of times!
+
+        if self.weight_factors is None:
+            weights = (1,) * len(args[0])
+        else:
+            weights = self.weight_factors
+
+        # for i, inputs in enumerate(zip(*args)):
+        #     if weights[i] != 0.0:
+        #         print(self.loss, weights[i], self.loss(*inputs))
+
+        return sum(
+            [
+                weights[i] * self.loss(*inputs)
+                for i, inputs in enumerate(zip(*args))
+                if weights[i] != 0.0
+            ]
+        )

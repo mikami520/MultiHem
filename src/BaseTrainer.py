@@ -4,7 +4,7 @@
 Author       : Chris Xiao yl.xiao@mail.utoronto.ca
 Date         : 2025-03-08 22:04:58
 LastEditors  : Chris Xiao yl.xiao@mail.utoronto.ca
-LastEditTime : 2025-03-19 17:19:58
+LastEditTime : 2025-03-25 21:19:49
 FilePath     : /Downloads/MultiHem/src/BaseTrainer.py
 Description  : Trainer script for base model
 I Love IU
@@ -12,6 +12,7 @@ Copyright (c) 2025 by Chris Xiao yl.xiao@mail.utoronto.ca, All Rights Reserved.
 """
 
 import os
+import json
 import datetime
 import numpy as np
 from tqdm.auto import tqdm
@@ -30,6 +31,8 @@ from monai.transforms import (
 )
 from monai.data import CacheDataset, DataLoader
 from monai.data.utils import partition_dataset
+from monai.metrics import DiceHelper, HausdorffDistanceMetric
+import ants
 
 TRANSFORMS = Compose(
     [
@@ -57,7 +60,7 @@ TRANSFORMS = Compose(
 
 
 class BaseTrainer:
-    def __init__(self, cfg, device):
+    def __init__(self, cfg, device, test=False):
         self.cfg = cfg
         self.device = device
         self.train_dir = "exp"
@@ -71,7 +74,7 @@ class BaseTrainer:
         self.prepare_network()
         self.prepare_optimizer()
         self.prepare_loss()
-        self.prepare_dataloader()
+        self.prepare_dataloader(test=test)
 
     def prepare_dir(self):
         make_if_dont_exist(self.train_dir)
@@ -113,33 +116,40 @@ class BaseTrainer:
                 f"\tResuming Training from Epoch {self.last_epoch_train + 1}"
             )
 
-    def prepare_dataloader(self):
+    def prepare_dataloader(self, test=False):
         handler = DataHandler(self.cfg)
         data_path = handler._get_paths()
 
-        data_train, data_valid = partition_dataset(data_path, ratios=(8, 2))
-        self.dataloader_train = DataLoader(
-            CacheDataset(
-                data=data_train,
+        if not test:
+            data_train, data_valid = partition_dataset(data_path, ratios=(8, 2))
+            self.dataloader_train = DataLoader(
+                CacheDataset(
+                    data=data_train,
+                    transform=TRANSFORMS,
+                    cache_num=16,
+                ),
+                batch_size=int(self.cfg.model.baseseg.batch_size),
+                num_workers=0,
+                shuffle=True,
+                pin_memory=True,
+            )
+            self.dataloader_valid = DataLoader(
+                CacheDataset(
+                    data=data_valid,
+                    transform=TRANSFORMS,
+                    cache_num=16,
+                ),
+                batch_size=int(self.cfg.model.baseseg.batch_size) * 2,
+                num_workers=0,
+                shuffle=False,
+                pin_memory=True,
+            )
+        else:
+            self.dataloader_test = CacheDataset(
+                data=data_path,
                 transform=TRANSFORMS,
                 cache_num=16,
-            ),
-            batch_size=int(self.cfg.model.baseseg.batch_size),
-            num_workers=0,
-            shuffle=True,
-            pin_memory=True,
-        )
-        self.dataloader_valid = DataLoader(
-            CacheDataset(
-                data=data_valid,
-                transform=TRANSFORMS,
-                cache_num=16,
-            ),
-            batch_size=int(self.cfg.model.baseseg.batch_size) * 2,
-            num_workers=0,
-            shuffle=False,
-            pin_memory=True,
-        )
+            )
 
     def train(self):
         self.logger.info("-----" * 10)
@@ -213,6 +223,71 @@ class BaseTrainer:
             torch.cuda.empty_cache()
             self.logger.info(f"\tSaving Checkpoint for Epoch {epoch + 1}")
             self.save_checkpoint()
+
+    def test(self):
+        self.test_dir = "prediction"
+        self.out_dir = os.path.join(self.test_dir, self.cfg.exp_name)
+        make_if_dont_exist(self.test_dir)
+        make_if_dont_exist(self.out_dir)
+        self.net.load_state_dict(
+            torch.load(
+                os.path.join(self.model_dir, "best_baseline.pt"),
+                map_location=torch.device("cpu"),
+            )
+        )
+        self.net.to(self.device)
+        self.net.eval()
+
+        dc = DiceHelper(
+            include_background=False, sigmoid=False, softmax=False, num_classes=2
+        )
+        hd = HausdorffDistanceMetric(include_background=False, reduction="mean")
+        tmp = ants.image_read("../Hemo_Data_Seg/test/labels/Hem_00037_1.nii.gz")
+        metrics = {}
+        with torch.no_grad():
+            metric_dice = []
+            metric_hd = []
+            for data in self.dataloader_test:
+                img, seg = (
+                    data["img"].unsqueeze(0).to(self.device),
+                    data["seg"].unsqueeze(0).to(self.device),
+                )
+                filename = os.path.basename(data["seg_meta_dict"]["filename_or_obj"])
+                metrics[filename] = {}
+                pred = self.net(img)
+                pred = torch.argmax(pred, dim=1, keepdim=True)
+                dice_score, _ = dc(pred, seg)
+                hd_score = hd(pred, seg)
+                metric_dice.append(dice_score.item())
+                metric_hd.append(hd_score.item())
+                metrics[filename]["dice"] = dice_score.item()
+                metrics[filename]["hd"] = hd_score.item()
+                pred_numpy = pred.squeeze().detach().cpu().numpy()
+                ants_image = ants.from_numpy(
+                    pred_numpy,
+                    origin=tmp.origin,
+                    spacing=tmp.spacing,
+                    direction=tmp.direction,
+                )
+                ants_image.to_file(
+                    os.path.join(
+                        self.out_dir,
+                        f"prediction_{filename}",
+                    )
+                )
+
+        avg_dice = np.mean(metric_dice, axis=0)
+        avg_hd = np.mean(metric_hd, axis=0)
+
+        metrics["average"] = {
+            "dice": avg_dice,
+            "hd": avg_hd,
+        }
+
+        with open(os.path.join(self.out_dir, "metrics.json"), "w") as f:
+            json.dump(metrics, f, indent=4, sort_keys=True)
+
+        f.close()
 
     def save_checkpoint(self):
         torch.save(

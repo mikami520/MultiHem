@@ -4,8 +4,8 @@
 Author       : Chris Xiao yl.xiao@mail.utoronto.ca
 Date         : 2025-02-19 23:26:08
 LastEditors  : Chris Xiao yl.xiao@mail.utoronto.ca
-LastEditTime : 2025-02-24 03:24:26
-FilePath     : /MultiHem/src/loss.py
+LastEditTime : 2025-04-04 19:56:43
+FilePath     : /Downloads/MultiHem/src/loss.py
 Description  : Loss Functions of MultiHem
 I Love IU
 Copyright (c) 2025 by Chris Xiao yl.xiao@mail.utoronto.ca, All Rights Reserved.
@@ -13,16 +13,15 @@ Copyright (c) 2025 by Chris Xiao yl.xiao@mail.utoronto.ca, All Rights Reserved.
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-import monai
+from torch import Tensor
 import monai.networks.blocks.warp as warp_module
 from monai import losses
 
 
 __all__ = [
     "DiceLoss",
-    "RegLoss",
     "SegLoss",
+    "RegLoss",
     "ClassLoss",
 ]
 
@@ -42,6 +41,46 @@ class DiceLoss(nn.Module):
         return loss
 
 
+class SegLoss(nn.Module):
+    def __init__(self, lambda_super, lambda_ana, reduction="mean"):
+        super(SegLoss, self).__init__()
+        self.dice = losses.DiceLoss(
+            include_background=False,
+            to_onehot_y=False,
+            softmax=False,
+            reduction=reduction,
+        )
+        # self.lambda_super = lambda_super
+        # self.lambda_ana = lambda_ana
+        # self.warp = warp_module.Warp(mode="nearest", padding_mode="border")
+
+    def forward(
+        self,
+        pred1: torch.Tensor,
+        pred2: torch.Tensor,
+        seg1: torch.Tensor | None,
+        seg2: torch.Tensor | None,
+        disp: torch.Tensor,
+    ) -> torch.Tensor:
+        if seg1 is not None and seg2 is not None:
+            loss_super = self.dice(pred1, seg1) + self.dice(pred2, seg2)
+        elif seg1 is not None:
+            loss_super = self.dice(pred1, seg1)
+            seg2 = pred2
+        else:
+            assert seg2 is not None
+            loss_super = self.dice(pred2, seg2)
+            seg1 = pred1
+
+        warped_seg = self.warp(seg2, disp)
+        loss_anatomy = (
+            self.dice(warped_seg, seg1) if seg1 is not None or seg2 is not None else 0.0
+        )
+        seg_loss = self.lambda_super * loss_super + self.lambda_ana * loss_anatomy
+
+        return seg_loss
+
+
 class RegLoss(nn.Module):
     def __init__(
         self, lambda_sim, lambda_penal, lambda_ana, reduction="mean", num_classes=2
@@ -49,13 +88,13 @@ class RegLoss(nn.Module):
         super(RegLoss, self).__init__()
         self.sim = losses.LocalNormalizedCrossCorrelationLoss(
             spatial_dims=3,
-            kernel_size=3,
+            kernel_size=7,
             kernel_type="rectangular",
             reduction=reduction,
         )
         self.penalty = losses.BendingEnergyLoss(normalize=True, reduction=reduction)
         self.dice = losses.DiceLoss(
-            include_background=True,
+            include_background=False,
             to_onehot_y=False,
             softmax=False,
             reduction=reduction,
@@ -85,57 +124,28 @@ class RegLoss(nn.Module):
             + self.lambda_penal * penalty_loss
             + self.lambda_ana * dice_loss
         )
+        # print(
+        #     f"sim_loss: {sim_loss.item():.4f}, penalty_loss: {penalty_loss.item():.4f}, dice_loss: {dice_loss.item():.4f}"
+        # )
         return reg_loss
 
 
-class SegLoss(nn.Module):
-    def __init__(self, lambda_super, lambda_ana, reduction="mean", alternative=False):
-        super(SegLoss, self).__init__()
-        self.dice = losses.DiceLoss(
-            include_background=True,
-            to_onehot_y=False,
-            softmax=False,
-            reduction=reduction,
-        )
-        self.lambda_super = lambda_super
-        self.lambda_ana = lambda_ana
-        if alternative:
-            self.warp = warp_module.Warp(mode="bilinear", padding_mode="border")
-        else:
-            self.warp = warp_module.Warp(mode="nearest", padding_mode="border")
-
-    def forward(
+class ClassLoss(nn.CrossEntropyLoss):
+    def __init__(
         self,
-        pred1: torch.Tensor,
-        pred2: torch.Tensor,
-        seg1: torch.Tensor | None,
-        seg2: torch.Tensor | None,
-        disp: torch.Tensor,
-    ) -> torch.Tensor:
-        if seg1 is not None and seg2 is not None:
-            loss_super = self.dice(pred1, seg1) + self.dice(pred2, seg2)
-        elif seg1 is not None:
-            loss_super = self.dice(pred1, seg1)
-            seg2 = pred2
-        else:
-            assert seg2 is not None
-            loss_super = self.dice(pred2, seg2)
-            seg1 = pred1
-
-        warped_seg = self.warp(seg2, disp)
-        loss_anatomy = (
-            self.dice(warped_seg, seg1) if seg1 is not None or seg2 is not None else 0.0
+        weight=None,
+        size_average=None,
+        ignore_index: int = -100,
+        reduction="mean",
+        label_smoothing: float = 0,
+    ):
+        super().__init__(
+            weight=weight,
+            ignore_index=ignore_index,
+            size_average=size_average,
+            reduction=reduction,
+            label_smoothing=label_smoothing,
         )
-        seg_loss = self.lambda_super * loss_super + self.lambda_ana * loss_anatomy
 
-        return seg_loss
-
-
-class ClassLoss(nn.Module):
-    def __init__(self, reduction="mean"):
-        super(ClassLoss, self).__init__()
-        self.ce = nn.CrossEntropyLoss(reduction=reduction)
-
-    def forward(self, y_pred, y_true):
-        loss = self.ce(y_pred, y_true.long())
-        return loss
+    def forward(self, input: Tensor, target: Tensor) -> Tensor:
+        return super().forward(input, target.long())
