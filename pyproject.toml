@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=64.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "MultiHem"
+version = "0.1.0"
+description = "Multitask Learning on Segmentation and Classification of Intracranial Hemorrhage Using CT Scans"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "Chris Xiao", email = "yl.xiao@mail.utoronto.ca"}
+]
+dependencies = [
+    "antspyx",
+    "torch",
+    "omegaconf",
+    "tqdm",
+    "scipy",
+    "monai",
+    "tensorboard",
+    "matplotlib",
+]
+
+[project.optional-dependencies]
+all = [
+    "monai[all]",
+    "torchvision",
+    "torchaudio",
+]
+dev = [
+    "pytest",
+    "black",
+    "flake8",
+    "isort",
+    "mypy",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/mikami520/MultiHem"
+"Bug Tracker" = "https://github.com/mikami520/MultiHem/issues"
