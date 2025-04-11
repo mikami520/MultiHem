@@ -29,12 +29,8 @@
     
     <!-- Hem -->
     <text x="240" y="160" font-family="Arial, sans-serif" font-size="100" font-weight="bold" fill="#4013d0">Hem</text>
-    
-    <!-- -V -->
-    <text x="440" y="160" font-family="Arial, sans-serif" font-size="100" font-weight="bold" fill="#000000">-</text>
-    <text x="480" y="160" font-family="Arial, sans-serif" font-size="100" font-weight="bold" fill="#ff0000">V</text>
   </g>
   
-  <!-- Tagline -->
-  <text x="450" y="210" font-family="Times New Roman, serif" font-size="36" font-style="italic" text-anchor="middle" fill="#222222">Multitask learning for medical imaging</text>
+  <!-- Tagline - adjusted to prevent overlap -->
+  <text x="490" y="210" font-family="Times New Roman, serif" font-size="34" font-style="italic" text-anchor="middle" fill="#222222">Multitask learning for intracranial hemorrhage</text>
 </svg>
