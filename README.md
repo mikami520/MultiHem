@@ -137,11 +137,18 @@ python main.py --cfg config.yml --device cuda --test
 
 All prediction results are saved in the `prediction` folder.
 
-## 📄 License
+## Star History
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+<p align="center">
+  <a href="https://www.star-history.com/#mikami520/MultiHem&Date">
+   <picture>
+     <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=mikami520/MultiHem&type=Date&theme=dark" />
+     <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=mikami520/MultiHem&type=Date" />
+     <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=mikami520/MultiHem&type=Date" />
+   </picture>
+  </a>
+</p>
 
----
 
 <div align="center">
 <p>Developed by Chris Xiao | University of Toronto</p>
